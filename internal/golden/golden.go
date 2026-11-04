@@ -44,6 +44,8 @@ type Row struct {
 	ToNumber  []string `json:"toNumber"`
 	LLM       [][2]int `json:"llm"`
 	NThings   [][2]int `json:"nthings"`
+	// NThingsFixed is the corrected no-n-things (see goldens.mjs).
+	NThingsFixed [][2]int `json:"nthingsFixed"`
 }
 
 // Load reads a gzipped JSONL golden file.

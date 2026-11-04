@@ -517,3 +517,36 @@ func (v *View) isFull() bool {
 	}
 	return true
 }
+
+// Detached copies only the sentences this view touches into a new document
+// and returns the same ranges over it. Edits such as ToNumber() stay inside
+// their sentence, so on the copy they give what view.clone() gives in JS,
+// without copying the whole document, and leave the original untouched.
+func (v *View) Detached() *View {
+	d := v.doc
+	nd := &Doc{m: d.m}
+	remap := map[int]int{}
+	ptrs := make([]pointer, 0, len(v.ptrs))
+	for _, p := range v.ptrs {
+		if p[0] >= len(d.document) {
+			continue
+		}
+		n, ok := remap[p[0]]
+		if !ok {
+			n = len(nd.document)
+			remap[p[0]] = n
+			src := d.document[p[0]]
+			cp := make([]*Term, len(src))
+			for i, t := range src {
+				c := *t
+				c.Alias = append([]string(nil), t.Alias...)
+				c.Tags = Tags{list: append([]string(nil), t.Tags.list...)}
+				c.Index = [2]int{n, i}
+				cp[i] = &c
+			}
+			nd.document = append(nd.document, cp)
+		}
+		ptrs = append(ptrs, pointer{n, p[1], p[2]})
+	}
+	return &View{doc: nd, ptrs: ptrs}
+}

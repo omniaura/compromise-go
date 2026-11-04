@@ -26,8 +26,10 @@ func norm(s [][2]int) [][2]int {
 	return s
 }
 
-// TestRuleParity checks that both rules report the same spans as the JS
-// rules (@faircopy/rules-nlp 1.26.0) on every golden document.
+// TestRuleParity checks no-llm-speak against the JS rule
+// (@faircopy/rules-nlp 1.26.0) and no-n-things against the corrected JS rule
+// in goldens.mjs, on every golden document. It also counts the documents
+// where the correction changes the JS rule's answer.
 func TestRuleParity(t *testing.T) {
 	files := []string{"../testdata/golden/drafts.jsonl.gz", "../testdata/golden/compromise-tests.jsonl.gz", "../testdata/golden/adversarial.jsonl.gz"}
 	if v := os.Getenv("PARITY_EXTRA"); v != "" {
@@ -41,7 +43,7 @@ func TestRuleParity(t *testing.T) {
 			t.Fatal(err)
 		}
 		var bad []string
-		hits := 0
+		hits, changed := 0, 0
 		for _, row := range rows {
 			llm := spans(NoLLMSpeak(compromise.New(row.Text), LLMSpeakOptions{}))
 			nt := spans(NoNThings(compromise.New(row.Text), row.Text, NThingsOptions{}))
@@ -49,11 +51,14 @@ func TestRuleParity(t *testing.T) {
 			if !reflect.DeepEqual(llm, norm(row.LLM)) {
 				bad = append(bad, fmt.Sprintf("no-llm-speak %q: %v, want %v", row.Text, llm, row.LLM))
 			}
-			if !reflect.DeepEqual(nt, norm(row.NThings)) {
-				bad = append(bad, fmt.Sprintf("no-n-things %q: %v, want %v", row.Text, nt, row.NThings))
+			if !reflect.DeepEqual(nt, norm(row.NThingsFixed)) {
+				bad = append(bad, fmt.Sprintf("no-n-things %q: %v, want %v", row.Text, nt, row.NThingsFixed))
+			}
+			if !reflect.DeepEqual(norm(row.NThings), norm(row.NThingsFixed)) {
+				changed++
 			}
 		}
-		t.Logf("%s: %d docs, %d diagnostics, %d mismatches", file, len(rows), hits, len(bad))
+		t.Logf("%s: %d docs, %d diagnostics, %d mismatches, %d docs where the no-n-things fix changes the JS result", file, len(rows), hits, len(bad), changed)
 		if len(bad) > 0 {
 			if len(bad) > 30 {
 				bad = bad[:30]
@@ -73,5 +78,24 @@ func TestMessagesAreStatic(t *testing.T) {
 	}
 	if len(Review(text)) != 2 {
 		t.Fatalf("want 2 diagnostics, got %+v", Review(text))
+	}
+}
+
+// TestNThingsCountsEveryOccurrence pins the fix: the JS rule reports the
+// first "three things" only, and reads "one, two, three things" as 1.
+func TestNThingsCountsEveryOccurrence(t *testing.T) {
+	text := "We found three things. Then three things again: one, two, three things. Also (5) things and first things first."
+	doc := compromise.New(text)
+	got := NoNThings(doc, text, NThingsOptions{})
+	var spans []string
+	for _, d := range got {
+		spans = append(spans, text[d.ByteStart:d.ByteEnd])
+	}
+	want := []string{"three things", "three things", "one, two, three things", "(5) things"}
+	if !reflect.DeepEqual(spans, want) {
+		t.Fatalf("spans %q, want %q", spans, want)
+	}
+	if doc.Text() != text {
+		t.Fatalf("NoNThings edited the document: %q", doc.Text())
 	}
 }

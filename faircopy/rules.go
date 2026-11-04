@@ -2,10 +2,11 @@
 // no-llm-speak and no-n-things (omniaura/faircopy packages/rules-nlp), onto
 // the Go compromise port.
 //
-// The spans match the JavaScript rules exactly (that is what the parity
-// tests check). Messages differ on purpose: the JS messages quote the draft,
-// and a server-side review must never echo draft text back, so every message
-// here is static.
+// no-llm-speak reports exactly the JS rule's spans. no-n-things fixes a JS
+// bug (see NoNThings) and matches the corrected JS rule in
+// tools/dump-model/goldens.mjs. Messages differ on purpose: the JS messages
+// quote the draft, and a server-side review must never echo draft text back,
+// so every message here is static.
 package faircopy
 
 import (
@@ -109,6 +110,12 @@ type NThingsOptions struct {
 	AllowedPhrases []string
 }
 
+// countOpen and countClose are stripped from the ends of a count before Number().
+const (
+	countOpen  = "([{\"'“‘"
+	countClose = ")]}\"'”’"
+)
+
 const nThingsMessage = "name the items instead of counting a placeholder noun; a counted placeholder is an AI-writing tell"
 
 func normalizePhrase(s string) string {
@@ -125,9 +132,15 @@ func escapeMatchWord(w string) string {
 	}, w)
 }
 
-// NoNThings runs no-n-things on a parsed document. Like the JS rule it calls
-// values().toNumber(), which rewrites numbers in doc in place: parse a fresh
-// Doc per rule.
+// NoNThings runs no-n-things on a parsed document.
+//
+// It differs from the JS rule in one deliberate way. The JS rule re-finds
+// each match by its text and calls values().toNumber() on the whole document,
+// which rewrites the numbers in place, so a repeated "three things" is
+// reported once and "one, two, three things" is counted as one. Here each
+// match is counted on a copy of its sentence, from the value right before the noun,
+// ignoring brackets and quotes around it.
+// tools/dump-model/goldens.mjs holds the same fixed rule in JS.
 func NoNThings(doc *compromise.Doc, text string, opts NThingsOptions) []Diagnostic {
 	minCount := opts.MinCount
 	if minCount == 0 {
@@ -150,22 +163,26 @@ func NoNThings(doc *compromise.Doc, text string, opts NThingsOptions) []Diagnost
 	if len(clean) == 0 || text == "" {
 		return nil
 	}
-	spans := doc.Match("#Value+ (" + strings.Join(clean, "|") + ")").Spans()
+	matches := doc.Match("#Value+ (" + strings.Join(clean, "|") + ")")
+	spans := matches.Spans()
 	var out []Diagnostic
-	for _, s := range spans {
+	for i, m := range matches.Each() {
+		s := spans[i]
 		if len(s.Terms) < 2 || s.End <= s.Start {
 			continue
 		}
-		matched := text[s.ByteStart:s.ByteEnd]
-		if allowed[normalizePhrase(matched)] {
+		if allowed[normalizePhrase(text[s.ByteStart:s.ByteEnd])] {
 			continue
 		}
 		// Only a cardinal count frames the trope; ordinals and vague values
 		// come back from toNumber() as non-numbers.
-		counts := doc.Match(matched).Values().ToNumber().Out()
+		counts := m.Detached().Values().ToNumber().Out()
 		count := math.NaN()
 		if len(counts) > 0 {
-			count = compromise.JSNumber(counts[0])
+			// brackets and quotes around a count ("(5) things") don't change it
+			if c := strings.TrimRight(strings.TrimLeft(counts[len(counts)-1], countOpen), countClose); c != "" {
+				count = compromise.JSNumber(c)
+			}
 		}
 		if math.IsNaN(count) || math.IsInf(count, 0) || count < float64(minCount) {
 			continue
@@ -179,10 +196,12 @@ func NoNThings(doc *compromise.Doc, text string, opts NThingsOptions) []Diagnost
 	return out
 }
 
-// Review runs both rules the way the JS rules do: each on its own parse.
+// Review runs both rules on one parse. NoNThings no longer edits the
+// document, so the rules can share it.
 func Review(text string) []Diagnostic {
-	out := NoLLMSpeak(compromise.New(text), LLMSpeakOptions{})
-	out = append(out, NoNThings(compromise.New(text), text, NThingsOptions{})...)
+	doc := compromise.New(text)
+	out := NoLLMSpeak(doc, LLMSpeakOptions{})
+	out = append(out, NoNThings(doc, text, NThingsOptions{})...)
 	sort.SliceStable(out, func(a, b int) bool { return out[a].Start < out[b].Start })
 	return out
 }

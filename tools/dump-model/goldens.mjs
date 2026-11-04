@@ -6,9 +6,12 @@
 // Corpus format: documents separated by a line holding only "---" (or, with
 // --lines, one document per line).
 //
-// The two rule functions below are the check() bodies of
-// @faircopy/rules-nlp 1.26.0 (no-llm-speak, no-n-things) with the source map
-// set to identity, so their spans are what Fair Copy reports for plain text.
+// noLlmSpeak and noNThings below are the check() bodies of
+// @faircopy/rules-nlp 1.26.0 with the source map set to identity, so their
+// spans are what Fair Copy reports for plain text. noNThingsFixed is the
+// corrected no-n-things that the Go port implements: it counts each match on
+// its own clone, from the value right before the noun, instead of re-finding
+// the match by text on a document that toNumber() has already rewritten.
 import nlp from 'compromise'
 import { readFileSync } from 'node:fs'
 
@@ -71,6 +74,25 @@ function noNThings(text) {
   return out.sort((l, r) => l[0] - r[0])
 }
 
+function noNThingsFixed(text) {
+  const out = []
+  if (text.length === 0) return out
+  const doc = nlp(text)
+  doc.match('#Value+ (thing|things)').forEach(m => {
+    const entry = m.json({ offset: true, terms: { offset: true } })[0]
+    if (!entry || (entry.terms ?? []).length < 2) return
+    const s = span(entry)
+    if (!s) return
+    const countOut = m.clone().values().toNumber().out('array')
+    // brackets and quotes around a count ("(5) things") don't change it
+    const countText = (countOut[countOut.length - 1] ?? '').replace(/^[(\[{"'“‘]+|[)\]}"'”’]+$/g, '')
+    const count = countText ? Number(countText) : Number.NaN
+    if (!Number.isFinite(count) || count < 2) return
+    out.push(s)
+  })
+  return out.sort((l, r) => l[0] - r[0])
+}
+
 for (const text of docs) {
   const doc = nlp(text)
   const json = doc.json({ offset: true, terms: { offset: true, tags: true, normal: true, implicit: true, machine: true } })
@@ -85,6 +107,7 @@ for (const text of docs) {
     toNumber: nlp(text).values().toNumber().out('array'),
     llm: noLlmSpeak(text),
     nthings: noNThings(text),
+    nthingsFixed: noNThingsFixed(text),
   }
   process.stdout.write(JSON.stringify(row) + '\n')
 }

@@ -35,8 +35,7 @@ var sizes = []struct {
 	n    int
 }{{"1KB", 1 << 10}, {"8KB", 8 << 10}, {"16KB", 16 << 10}}
 
-// BenchmarkReview is what a server-side review costs: both rules, each on
-// its own parse (as the JS rules do).
+// BenchmarkReview is what a server-side review costs: one parse, both rules.
 func BenchmarkReview(b *testing.B) {
 	for _, s := range sizes {
 		text := draft(b, s.n)
@@ -59,23 +58,6 @@ func BenchmarkParse(b *testing.B) {
 			b.SetBytes(int64(len(text)))
 			for i := 0; i < b.N; i++ {
 				compromise.New(text)
-			}
-		})
-	}
-}
-
-// BenchmarkReviewSharedParse runs both rules on one parse (no-llm-speak
-// first, since no-n-things rewrites numbers in place).
-func BenchmarkReviewSharedParse(b *testing.B) {
-	for _, s := range sizes {
-		text := draft(b, s.n)
-		b.Run(s.name, func(b *testing.B) {
-			b.ReportAllocs()
-			b.SetBytes(int64(len(text)))
-			for i := 0; i < b.N; i++ {
-				doc := compromise.New(text)
-				NoLLMSpeak(doc, LLMSpeakOptions{})
-				NoNThings(doc, text, NThingsOptions{})
 			}
 		})
 	}

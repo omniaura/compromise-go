@@ -22,7 +22,7 @@ doc := compromise.New("It's important to note that we found three things.")
 for _, s := range doc.Match("#Value+ (thing|things)").Spans() {
 	fmt.Println(s.Start, s.End) // UTF-16 offsets, as compromise reports them; ByteStart/ByteEnd too
 }
-diags := faircopy.Review(text) // both rules, static messages
+diags := faircopy.Review(text) // both rules on one parse, static messages
 ```
 
 ## Why a port (and why this name)
@@ -81,10 +81,11 @@ Not ported: the rest of `three` (verbs, nouns, sentences API, chunker, etc.),
 
 Per term it checks text, pre, post, normal, implicit, machine, UTF-16 offset
 and the tag set (also tag order, which matches); per document it checks
-`values()` and `values().toNumber()`; and `faircopy.TestRuleParity` checks both
-rules' spans (75 + 2 + 733 + 4 diagnostics, all identical). The match engine
-has its own fixture tests (`match_test.go`, fixtures from
-`tools/dump-model/match-fixtures.mjs`).
+`values()` and `values().toNumber()`. `faircopy.TestRuleParity` checks
+`no-llm-speak` against the JS rule and `no-n-things` against the corrected JS
+rule in `goldens.mjs` (see below): 82 + 2 + 899 + 4 diagnostics, all
+identical. The match engine has its own fixture tests (`match_test.go`,
+fixtures from `tools/dump-model/match-fixtures.mjs`).
 
 The tests fail when the port is wrong: the first runs reported 258 tag
 differences (a lexicon fall-through bug), then 38 (number ranges and
@@ -101,36 +102,42 @@ match token never matches.
 
 ## Benchmarks
 
-`go test -bench . -benchmem ./...` on Boat sandbox `bx_ga3nm8n4` (4 vCPU AMD
-Ryzen 7 9700X, go1.23.4), medians of 10 (raw output in `benchmarks/`). Drafts
-are cut from `testdata/corpus/drafts.txt`.
+`go test -bench . -benchmem ./...`, medians of 10, on a dedicated Boat sandbox
+(`bx_2pmgrb6a`, 4 vCPU AMD Ryzen 9 9950X, go1.23.4, load average ~1; raw
+output in `benchmarks/`). Drafts are cut from `testdata/corpus/drafts.txt`.
 
 | | 1 KB | 8 KB | 16 KB |
 |---|---|---|---|
-| `faircopy.Review` (both rules, each on its own parse, as the JS rules do) | 3.7 ms / 0.64 MiB | 28 ms / 6.2 MiB | 62 ms / 13 MiB |
-| both rules on one shared parse | 1.8 ms / 0.38 MiB | 16 ms / 4.1 MiB | 36 ms / 8.8 MiB |
-| `compromise.New` (parse + tag) | 1.6 ms / 0.25 MiB | 13 ms / 2.1 MiB | 21 ms / 4.2 MiB |
+| `faircopy.Review` (one parse, both rules) | 1.8 ms / 0.38 MiB | 15 ms / 3.4 MiB | 31 ms / 6.6 MiB |
+| `compromise.New` (parse + tag) | 1.4 ms / 0.25 MiB | 11 ms / 2.1 MiB | 22 ms / 4.2 MiB |
+
+The embedded model is decoded once per process: 27 ms, 17 MiB allocated.
+Run-to-run spread was about 3%.
 
 For comparison, DITTO-2120 measured the same two rules through the goja bundle
-(omniaura/faircopy#46, ditto-assistant/backend#4156, also a 4 vCPU Boat
-sandbox): 533 ms / 334 MiB at 1 KB, 1.15 s / 998 MiB at 8 KB, and 5 of 14
-timeouts at the 2 s deadline / 1,740 MiB at 16 KB; plus ~300 ms and 190 MiB to
-load the bundle on every call.
+(omniaura/faircopy#46, ditto-assistant/backend#4156, 4 vCPU Boat sandbox):
+533 ms / 334 MiB at 1 KB, 1.15 s / 998 MiB at 8 KB, and 5 of 14 timeouts at the
+2 s deadline / 1,740 MiB at 16 KB, plus ~300 ms and 190 MiB to load the bundle
+on every call.
 
 ## Fair Copy rule notes
 
 - `faircopy` messages are static. The JS messages quote the draft; a server
   review must never echo draft text, so only the spans match JS.
-- Both rules flag legitimate formal writing with their default lists
+- `no-n-things` fixes two bugs in the JS rule. The JS rule re-finds each match
+  by its text and calls `values().toNumber()` on the whole document, which
+  rewrites numbers in place, so a repeated "three things" is reported once; and
+  it reads the first value of a match, so "one, two, three things" counts as 1.
+  The Go rule counts each match on a copy of its own sentence, from the value
+  right before the noun, ignoring brackets and quotes around it ("(5) things").
+  The corrected JS rule (`noNThingsFixed` in `goldens.mjs`) gives the same
+  answers. Against the original JS rule it adds 7 hits on the drafts and 166
+  on the adversarial set, and drops none.
+- Both rules still flag legitimate formal writing with their default lists
   ("Furthermore", "robust", "crucial", "Two things are required before
   closing"). Server use still needs allowlists, as DITTO-2120 found.
-- The JS `no-n-things` rule calls `values().toNumber()`, which rewrites the
-  document in place. Because it re-matches by text, a repeated phrase is
-  reported once: in "three things … three things" the second is skipped. The Go
-  rule reproduces this for parity; it is a bug in the JS rule worth fixing on
-  both sides.
-- `toNumber()` output goes through `Number()`, so "5,000 things", "(3) things",
-  "first things" and "a few things" are never flagged.
+- `toNumber()` output goes through `Number()`, so "5,000 things", "first
+  things" and "a few things" are never flagged.
 
 ## Regenerating
 
@@ -146,5 +153,7 @@ algorithm change upstream shows up as golden differences.
 
 ## Licence
 
-MIT. See `LICENSE`: compromise's copyright notice is kept, and the embedded
-model and `testdata/corpus/compromise-tests.txt` derive from compromise.
+MIT (`LICENSE`), keeping compromise's copyright notice. The embedded model
+(`model/model.json.gz`) is generated from compromise's data, and
+`testdata/corpus/compromise-tests.txt` is harvested from compromise's test
+suite.

@@ -3,11 +3,6 @@ The MIT License (MIT)
 Copyright (c) 2019 Spencer Kelly
 Copyright (c) 2026 Omni Aura
 
-This repository is a Go port of compromise (https://github.com/spencermountain/compromise),
-whose copyright notice and licence are reproduced above and below. The embedded model
-(model/model.json.gz) is generated from compromise's own data, and the test corpus
-testdata/corpus/compromise-tests.txt is harvested from compromise's test suite.
-
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
